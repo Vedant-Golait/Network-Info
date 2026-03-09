@@ -1,0 +1,14 @@
+# Network Info Viewer — Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Network & system information
+psutil>=5.9.0
+
+# QR code generation
+qrcode[pil]>=7.4.2
+
+# Image handling and rendering (also used by qrcode)
+Pillow>=10.0.0
+
+# System tray icon support (optional — app runs without it)
+pystray>=0.19.5
