@@ -119,7 +119,7 @@ pip install -r requirements.txt
 **Step 4 — Run the application**
 
 ```bash
-python main.py
+python Network_Info.py
 ```
 
 > The app will automatically install any missing optional packages (`qrcode`, `Pillow`) on first launch.
@@ -154,7 +154,7 @@ Network-Info/
 ├── Exe/                         # Pre-built Windows executable
 │   └── Network Info Viewer.exe
 │
-├── main.py                      # Main application source file
+├── Network_Info.py                      # Main application source file
 ├── requirenments.txt            # Python dependencies
 └── README.md                    # Project documentation
 ```
@@ -188,4 +188,5 @@ This project is licensed under a **Custom MIT-Based License** — see the [`LICE
 
 <p align="center">
   Built with ❤️ for Windows users who want network clarity at a glance.
+
 </p>
