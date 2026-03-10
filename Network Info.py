@@ -9,6 +9,7 @@ import re
 import platform
 import sys
 import os
+import ctypes
 import io
 from datetime import datetime
 import threading
@@ -45,7 +46,7 @@ except Exception:
     HAS_PYSTRAY = False
 
 
-# Train icon helper 
+# Tray icon helper 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
     try:
@@ -53,6 +54,44 @@ def resource_path(relative_path):
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
+
+
+# ─────────────────────────────────────────────
+#  Single Instance Enforcement
+# ─────────────────────────────────────────────
+
+SINGLE_INSTANCE_MUTEX = "Global\\NetworkInfoApp_SingleInstance"
+IPC_PORT = 49152
+
+def enforce_single_instance():
+    """
+    Prevents multiple instances of the app from running simultaneously.
+    - Named Mutex  → detects if another instance is already running.
+    - Local Socket → signals the existing instance to restore its window.
+    If a second instance is launched, it signals the first and exits silently.
+    Returns the mutex handle — MUST be stored so it stays alive.
+    """
+    if platform.system() != "Windows":
+        return None
+
+    kernel32 = ctypes.windll.kernel32
+    mutex    = kernel32.CreateMutexW(None, False, SINGLE_INSTANCE_MUTEX)
+
+    if kernel32.GetLastError() == 183:          # ERROR_ALREADY_EXISTS
+        log.info("Another instance is already running — sending SHOW signal and exiting.")
+        try:
+            import socket as _s
+            sock = _s.socket(_s.AF_INET, _s.SOCK_STREAM)
+            sock.settimeout(2)
+            sock.connect(('127.0.0.1', IPC_PORT))
+            sock.sendall(b'SHOW')
+            sock.close()
+        except Exception as e:
+            log.debug(f"IPC signal failed: {e}")
+        sys.exit(0)
+
+    log.info("Single-instance mutex acquired — this is the primary instance.")
+    return mutex                                # keep handle alive in caller
 
 
 # ─────────────────────────────────────────────
@@ -448,6 +487,9 @@ class NetworkInfoApp(tk.Tk):
         self.last_net_io        = psutil.net_io_counters(pernic=True)
         self.create_widgets()
         self.update_speed()
+        # start IPC listener so a second instance can signal us to restore
+        self._start_ipc_listener()
+        
         # try to create a system tray icon (optional)
         try:
             if HAS_PYSTRAY:
@@ -872,7 +914,35 @@ class NetworkInfoApp(tk.Tk):
             self.status_var.set('Restored')
         except Exception:
             pass
-
+    
+    # ── IPC Listener (single-instance: receive SHOW signal) ────────────────
+    def _start_ipc_listener(self):
+        """Listens on localhost for a 'SHOW' signal from a second instance."""
+        import socket as _s
+        def _listen():
+            try:
+                srv = _s.socket(_s.AF_INET, _s.SOCK_STREAM)
+                srv.setsockopt(_s.SOL_SOCKET, _s.SO_REUSEADDR, 1)
+                srv.bind(('127.0.0.1', IPC_PORT))
+                srv.listen(5)
+                srv.settimeout(1.0)
+                log.debug(f"IPC listener started on port {IPC_PORT}")
+                while True:
+                    try:
+                        conn, _ = srv.accept()
+                        data    = conn.recv(16)
+                        conn.close()
+                        if data == b'SHOW':
+                            log.info("IPC: SHOW signal received — restoring window.")
+                            self.after(0, self._show_from_tray)
+                    except _s.timeout:
+                        continue
+                    except Exception:
+                        break
+            except Exception as e:
+                log.debug(f"IPC listener failed to start: {e}")
+        threading.Thread(target=_listen, daemon=True).start()
+    
     def _destroy_and_exit(self):
         try:
             if hasattr(self, '_tray_icon'):
@@ -1163,6 +1233,7 @@ class NetworkInfoApp(tk.Tk):
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
+    _mutex_handle = enforce_single_instance()   # must stay in scope — keeps mutex alive
     try:
         app = NetworkInfoApp()
         app.mainloop()
