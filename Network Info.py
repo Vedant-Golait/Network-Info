@@ -441,6 +441,18 @@ def build_wifi_qr_image(ssid, password, security):
     log.debug("  QR image generated successfully")
     return img
 
+# ─────────────────────────────────────────────
+#  Admin Privilege Check
+# ─────────────────────────────────────────────
+
+def is_admin():
+    """Checks if the script is currently running with Administrator privileges."""
+    if platform.system() != "Windows":
+        return True
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
 
 # ─────────────────────────────────────────────
 #  Main Application
@@ -490,6 +502,10 @@ class NetworkInfoApp(tk.Tk):
         # start IPC listener so a second instance can signal us to restore
         self._start_ipc_listener()
         
+        # Check for admin rights and prompt the user after 0.5 seconds
+        if not is_admin():
+            self.after(500, self._prompt_admin_elevation)
+        
         # try to create a system tray icon (optional)
         try:
             if HAS_PYSTRAY:
@@ -499,6 +515,40 @@ class NetworkInfoApp(tk.Tk):
 
         log.info("NetworkInfoApp initialised successfully")
 
+    # ── Admin Elevation Prompt ───────────────────────────
+
+    def _prompt_admin_elevation(self):
+        """Prompts the user to restart the app with Admin privileges if missing."""
+        log.info("Prompting user for Administrator elevation.")
+        msg = (
+            "You are currently running as a standard user.\n\n"
+            "Windows restricts access to certain secured Wi-Fi passwords unless the application is run as an Administrator "
+            "(which is why some may show as 'Unable to Retrieve').\n\n"
+            "Would you like to restart the application as an Administrator now for better password retrieval?"
+        )
+        
+        # Ask the user if they want to restart
+        if messagebox.askyesno("Admin Privileges Recommended", msg, parent=self):
+            try:
+                # Trigger the Windows UAC (User Account Control) prompt
+                script_path = os.path.abspath(sys.argv[0])
+                if getattr(sys, 'frozen', False):
+                    # For PyInstaller compiled .exe
+                    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv[1:]), None, 1)
+                else:
+                    # For standard .py python script
+                    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, f'"{script_path}"', None, 1)
+                
+                # Exit the current non-admin instance
+                self._destroy_and_exit()
+            except Exception as e:
+                log.error(f"Failed to elevate privileges: {e}")
+                messagebox.showerror(
+                    "Elevation Failed", 
+                    "Could not automatically restart as Administrator. Please right-click the file and select 'Run as administrator' manually.", 
+                    parent=self
+                )
+ 
     # ── UI Layout ──────────────────────────────
 
     def create_widgets(self):
@@ -517,7 +567,7 @@ class NetworkInfoApp(tk.Tk):
 
         col_widths = {
             "Interface": 140, "SSID": 160, "IP Address": 120,
-            "Password": 160,  "MAC Address": 140, "Config Type": 110,
+            "Password": 160,  "MAC Address": 140, "Config Type": 170, # <--- INCREASED
             "Router IP": 110, "Download Speed": 115, "Upload Speed": 110
         }
 
@@ -670,7 +720,7 @@ class NetworkInfoApp(tk.Tk):
                     interface_found = True
                     continue
                 if interface_found and "DHCP Enabled" in line:
-                    result = "Dynamic (DHCP)" if "Yes" in line else "Static"
+                    result = "DHCP" if "Yes" in line else "Static"
                     log.debug(f"  Config type for '{interface_name}': {result}")
                     return result
         except Exception as e:
@@ -680,6 +730,7 @@ class NetworkInfoApp(tk.Tk):
     def get_ip_info(self):
         log.info("─── get_ip_info() called ───────────────────────────────────────")
         ip_info    = {}
+        net_categories = self.get_network_categories()
         router_ips = self.get_router_ip()
 
         self.all_wifi_passwords = get_all_wifi_passwords_windows()
@@ -753,12 +804,19 @@ class NetworkInfoApp(tk.Tk):
                 for addr in addresses:
                     if addr.family == socket.AF_INET:
                         log.debug(f"  Storing IPv4 {addr.address} — SSID='{ssid}'")
+                        base_config = self.get_config_type(iface_name)
+                        category = net_categories.get(iface_name)
+                        if category:
+                            final_config = f"{base_config} / {category}"
+                        else:
+                            final_config = base_config
+                        
                         ip_info[iface_name] = {
                             'SSID':        ssid,
                             'IP Address':  addr.address,
                             'Password':    password,
                             'MAC Address': self.get_mac_address(iface_name),
-                            'Config Type': self.get_config_type(iface_name),
+                            'Config Type': final_config,
                             'Router IP':   router_ip,
                             'is_wifi':     ssid != "N/A"
                         }
@@ -772,6 +830,39 @@ class NetworkInfoApp(tk.Tk):
         wifi_ifaces = [k for k, v in ip_info.items() if v.get('is_wifi')]
         log.info(f"get_ip_info complete — {len(ip_info)} interface(s) | WiFi: {wifi_ifaces}")
         return ip_info
+
+    def get_network_categories(self):
+        """Retrieves the network category (Public/Private) for all interfaces."""
+        log.debug("Retrieving network categories via PowerShell")
+        categories = {}
+        if platform.system() != "Windows":
+            return categories
+
+        try:
+            ps_cmd = "Get-NetConnectionProfile | Select-Object InterfaceAlias, NetworkCategory | Format-List"
+            proc = subprocess.run(
+                ['powershell', '-NoProfile', '-NonInteractive', '-Command', ps_cmd],
+                capture_output=True, encoding='utf-8', errors='ignore',
+                creationflags=NO_WINDOW
+            )
+            current_alias = None
+            for line in proc.stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    current_alias = None
+                    continue
+                if line.lower().startswith('interfacealias'):
+                    _, _, val = line.partition(':')
+                    current_alias = val.strip()
+                elif line.lower().startswith('networkcategory') and current_alias:
+                    _, _, val = line.partition(':')
+                    categories[current_alias] = val.strip()
+            
+            log.info(f"Network categories map: {categories}")
+        except Exception as e:
+            log.error(f"Error retrieving network categories: {e}", exc_info=True)
+
+        return categories
 
     # ── Table Population ───────────────────────
 
