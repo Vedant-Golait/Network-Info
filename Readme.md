@@ -28,7 +28,7 @@
 
 | Dashboard | Saved Passwords | Diagnostic Logs |
 |:---------:|:---------------:|:---------------:|
-| ![Dashboard](./Screenshots/Dashboard.jpeg) | ![Saved Passwords](./Screenshots/Saved_pass.jpeg) | ![Log Viewer](./Screenshots/log.jpeg) |
+| ![Dashboard](./Screenshots/Dashboard.jpeg) | ![Advance](./Screenshots/Advance.jpeg) | ![Passwords](./Screenshots/Passwords.jpeg) | ![Network Profiler](./Screenshots/Network_Profiler.jpeg) | ![Logs](./Screenshots/logs.jpeg) |
 
 ---
 
