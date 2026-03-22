@@ -116,20 +116,23 @@ IPC_PORT = 49152
 
 def enforce_single_instance():
     """
-    Prevents multiple instances of the app from running simultaneously.
-    - Named Mutex  → detects if another instance is already running.
-    - Local Socket → signals the existing instance to restore its window.
-    If a second instance is launched, it signals the first and exits silently.
-    Returns the mutex handle — MUST be stored so it stays alive.
+    Bulletproof single-instance check using thread-safe error handling.
     """
     if platform.system() != "Windows":
         return None
 
-    kernel32 = ctypes.windll.kernel32
-    mutex    = kernel32.CreateMutexW(None, False, SINGLE_INSTANCE_MUTEX)
+    # We use WinDLL with use_last_error=True to capture codes reliably
+    # This prevents the Python interpreter from resetting the error status.
+    k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    
+    # 1. Attempt to create the mutex
+    mutex = k32.CreateMutexW(None, False, SINGLE_INSTANCE_MUTEX)
+    last_err = ctypes.get_last_error()
 
-    if kernel32.GetLastError() == 183:          # ERROR_ALREADY_EXISTS
-        log.info("Another instance is already running — sending SHOW signal and exiting.")
+    # 183 = ERROR_ALREADY_EXISTS
+    # 5   = ERROR_ACCESS_DENIED (Happens if Instance 1 is Admin and Instance 2 is User)
+    if last_err in (183, 5):
+        log.info(f"Duplicate instance detected (Error Code: {last_err}). Signaling primary instance.")
         try:
             import socket as _s
             sock = _s.socket(_s.AF_INET, _s.SOCK_STREAM)
@@ -139,10 +142,12 @@ def enforce_single_instance():
             sock.close()
         except Exception as e:
             log.debug(f"IPC signal failed: {e}")
+        
+        # Exit this second instance immediately
         sys.exit(0)
 
     log.info("Single-instance mutex acquired — this is the primary instance.")
-    return mutex                                # keep handle alive in caller
+    return mutex
 
 
 # ─────────────────────────────────────────────
