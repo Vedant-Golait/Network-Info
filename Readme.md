@@ -26,9 +26,10 @@
 
 > Screenshots are located in the [`Screenshots/`](./Screenshots) folder of this repository.
 
-| Dashboard | Saved Passwords | Diagnostic Logs |
-|:---------:|:---------------:|:---------------:|
+| Dashboard | Advanced | Saved Passwords | Network Profiler | Diagnostic Logs |
+|:---------:|:--------:|:---------------:|:----------------:|:---------------:|
 | ![Dashboard](./Screenshots/Dashboard.jpeg) | ![Advance](./Screenshots/Advance.jpeg) | ![Passwords](./Screenshots/Passwords.jpeg) | ![Network Profiler](./Screenshots/Network_Profiler.jpeg) | ![Logs](./Screenshots/logs.jpeg) |
+
 
 ---
 
@@ -143,20 +144,23 @@ Once the application is running:
 
 ## 📁 Repository Structure
 
-```
+```text
 Network-Info/
 │
 ├── Screenshots/                 # Application screenshots
 │   ├── Dashboard.jpeg
-│   ├── Saved_pass.jpeg
-│   └── log.jpeg
+│   ├── Advance.jpeg
+│   ├── Passwords.jpeg
+│   ├── Network_Profiler.jpeg
+│   └── logs.jpeg
 │
 ├── Exe/                         # Pre-built Windows executable
 │   └── Network Info Viewer.exe
 │
-├── Network_Info.py                      # Main application source file
-├── requirenments.txt            # Python dependencies
+├── Network_Info.py              # Main application source file
+├── requirements.txt             # Python dependencies
 └── README.md                    # Project documentation
+
 ```
 
 ---
