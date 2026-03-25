@@ -75,6 +75,7 @@ def get_settings_path():
 DEFAULT_SETTINGS = {
     "enable_tray": True,
     "autostart": False,
+    "silent_autostart": True,
     "log_directory": "",
     "refresh_interval": 5000,
     "theme": "dark",
@@ -478,6 +479,42 @@ def get_all_connected_ssids_windows(saved_profiles: dict = None):
 
 
 # ─────────────────────────────────────────────
+#  UI Helpers (Tooltips)
+# ─────────────────────────────────────────────
+class ToolTip:
+    """Creates a sleek hover tooltip for Tkinter widgets."""
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        self.widget.bind("<Enter>", self.show_tip, add="+")
+        self.widget.bind("<Leave>", self.hide_tip, add="+")
+
+    def show_tip(self, event=None):
+        if self.tip_window or not self.text:
+            return
+        
+        # Calculate position (slightly below and to the right of the cursor)
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+        
+        self.tip_window = tk.Toplevel(self.widget)
+        self.tip_window.wm_overrideredirect(True) # Remove window borders
+        self.tip_window.wm_geometry(f"+{x}+{y}")
+        
+        # Modern Dark Theme Tooltip styling
+        label = tk.Label(self.tip_window, text=self.text, justify=tk.LEFT,
+                         bg="#1A1A1A", fg="#E0E0E0", relief=tk.SOLID, borderwidth=1,
+                         font=("Arial", 9), padx=8, pady=6)
+        label.pack(ipadx=1)
+
+    def hide_tip(self, event=None):
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
+
+
+# ─────────────────────────────────────────────
 #  QR Code Generator
 # ─────────────────────────────────────────────
 
@@ -526,6 +563,9 @@ def is_admin():
     except Exception:
         return False
 
+
+
+
 # ─────────────────────────────────────────────
 #  Main Application
 # ─────────────────────────────────────────────
@@ -533,6 +573,10 @@ def is_admin():
 class NetworkInfoApp(tk.Tk):
     def __init__(self):
         super().__init__()
+        # Start hidden if we're doing a silent boot
+        self.withdraw()
+        self.is_silent_boot = "--silent" in sys.argv
+        
         self.ui_queue = queue.Queue()
         self._process_ui_queue()
         self.after(5000, self._auto_refresh_loop) # Start the background engine
@@ -594,11 +638,20 @@ class NetworkInfoApp(tk.Tk):
                  bg="#1A1A1A", fg="#7FFF7F",
                  font=("Arial", 9, "bold"), anchor="e").pack(side=tk.RIGHT, padx=15, pady=2)
 
-        self.show_dashboard()
+        # --- FIX 2: Handle silent boot and Admin logic safely ---
+        # If silent boot is true AND the tray is enabled, keep it hidden
+        if self.is_silent_boot and APP_SETTINGS.get("enable_tray", True):
+            self.status_var.set("Started minimized to tray")
+            self.refresh_info(fetch_data=True) 
+        else:
+            self.deiconify() # Un-hide the window since it's a normal launch
+            self.show_dashboard()
+
         self.update_speed()
         self._start_ipc_listener()
         
-        if not is_admin():
+        # Only prompt for Admin if this is a manual, non-silent launch
+        if not is_admin() and not self.is_silent_boot:
             self.after(500, self._prompt_admin_elevation)
         
         try:
@@ -813,7 +866,14 @@ class NetworkInfoApp(tk.Tk):
         info_frame = tk.Frame(self.adv_content, bg="#2E2E2E")
         info_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=20, pady=(20, 0))
 
-        tk.Label(info_frame, text="About Connected Networks", bg="#2E2E2E", fg="white", font=("Arial", 14, "bold")).pack(anchor="w", pady=(0, 10))
+        tk.Label(info_frame, text="Info", bg="#2E2E2E", fg="white", font=("Arial", 14, "bold")).pack(anchor="w", pady=(0, 10))
+        
+        # --- FIX 3: Add manual Admin button if running as standard user ---
+        if not is_admin():
+            admin_frame = tk.Frame(info_frame, bg="#3A2A2A", bd=1, relief=tk.SOLID)
+            admin_frame.pack(fill=tk.X, pady=(0, 10))
+            tk.Label(admin_frame, text="⚠️ Running as Standard User. Some passwords or profiles may be hidden.", bg="#3A2A2A", fg="#FFCC44", font=("Arial", 9)).pack(side=tk.LEFT, padx=10, pady=5)
+            ttk.Button(admin_frame, text="Restart as Admin", command=self._prompt_admin_elevation).pack(side=tk.RIGHT, padx=10, pady=5)
         
         active_networks = {
             iface: data for iface, data in self.ip_info.items() 
@@ -848,7 +908,7 @@ class NetworkInfoApp(tk.Tk):
         settings_frame = tk.Frame(self.adv_content, bg="#2E2E2E")
         settings_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(10, 20))
 
-        tk.Label(settings_frame, text="Settings", bg="#2E2E2E", fg="white", font=("Arial", 14, "bold")).pack(anchor="w", pady=(0, 10))
+        tk.Label(settings_frame, text="Preferences", bg="#2E2E2E", fg="white", font=("Arial", 14, "bold")).pack(anchor="w", pady=(0, 10))
 
         # --- Custom Log Directory ---
         log_frame = tk.Frame(settings_frame, bg="#2E2E2E")
@@ -859,8 +919,7 @@ class NetworkInfoApp(tk.Tk):
         current_log_dir = APP_SETTINGS.get("log_directory") or get_base_dir()
         log_dir_var = tk.StringVar(value=current_log_dir)
         
-        tk.Entry(log_frame, textvariable=log_dir_var, state="readonly", width=50, bg="#1E1E1E", fg="white").pack(side=tk.LEFT, padx=10)
-
+        tk.Entry(log_frame, textvariable=log_dir_var, state="readonly", width=50, bg="#1E1E1E", fg="white", readonlybackground="#1E1E1E").pack(side=tk.LEFT, padx=10)
         def browse_log_dir():
             from tkinter import filedialog
             new_dir = filedialog.askdirectory(title="Select Log Directory", initialdir=current_log_dir)
@@ -881,12 +940,15 @@ class NetworkInfoApp(tk.Tk):
         def toggle_tray():
             new_val = tray_var.get()
             APP_SETTINGS["enable_tray"] = new_val
-            save_settings(APP_SETTINGS) # Saves to settings.json instantly
+            save_settings(APP_SETTINGS)
             
-            # Apply the change immediately without needing a restart!
+            # Apply the change immediately
             if new_val:
                 if HAS_PYSTRAY and not hasattr(self, '_tray_icon'):
                     self._create_tray_icon()
+                # Re-enable the silent autostart checkbox if tray is ON and Autostart is ON
+                if auto_var.get():
+                    silent_cb.config(state=tk.NORMAL)
             else:
                 if hasattr(self, '_tray_icon'):
                     try:
@@ -894,6 +956,11 @@ class NetworkInfoApp(tk.Tk):
                         del self._tray_icon
                     except Exception as e:
                         log.error(f"Failed to stop tray icon: {e}")
+                
+                # Turn off and disable silent autostart if tray is off
+                silent_var.set(False)
+                silent_cb.config(state=tk.DISABLED)
+                update_registry_autostart() # Instantly remove silent flag from registry
 
         tk.Checkbutton(
             tray_frame, text="Enable System Tray Icon (Minimize to tray instead of closing)", 
@@ -902,54 +969,86 @@ class NetworkInfoApp(tk.Tk):
             activebackground="#2E2E2E", activeforeground="white"
         ).pack(side=tk.LEFT)
         
-        # --- Windows Autostart Toggle ---
+        # --- Windows Autostart Toggle (Main & Sub-setting) ---
         auto_frame = tk.Frame(settings_frame, bg="#2E2E2E")
         auto_frame.pack(fill=tk.X, pady=(5, 5))
         
         auto_var = tk.BooleanVar(value=APP_SETTINGS.get("autostart", False))
+        silent_var = tk.BooleanVar(value=APP_SETTINGS.get("silent_autostart", False))
         
-        def toggle_autostart():
-            new_val = auto_var.get()
-            APP_SETTINGS["autostart"] = new_val
-            save_settings(APP_SETTINGS) # Saves to settings.json instantly
+        def update_registry_autostart(*args):
+            """Updates the Windows Registry with the correct flags"""
+            APP_SETTINGS["autostart"] = auto_var.get()
+            APP_SETTINGS["silent_autostart"] = silent_var.get()
+            save_settings(APP_SETTINGS)
+            
+            # Control the visual state of the sub-checkbox
+            if auto_var.get() and tray_var.get():
+                silent_cb.config(state=tk.NORMAL)
+            else:
+                silent_cb.config(state=tk.DISABLED)
+                if not auto_var.get():
+                    silent_var.set(False) # Auto-uncheck if main is turned off
             
             if platform.system() == "Windows":
                 import winreg
                 key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
                 app_name = "NetworkInfoViewer"
                 try:
-                    # Open the registry key for the current user
                     key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE | winreg.KEY_READ)
                     
-                    if new_val:
-                        # Check if it's an .exe or a .py script to format the path correctly
+                    if auto_var.get():
+                        # Append the secret --silent flag if the toggle is ON
+                        silent_flag = " --silent" if silent_var.get() else ""
+                        
                         if getattr(sys, 'frozen', False):
-                            exe_path = f'"{sys.executable}"'
+                            exe_path = f'"{sys.executable}"{silent_flag}'
                         else:
-                            # Swap to pythonw.exe so it starts silently without a cmd window
                             py_exe = sys.executable.replace("python.exe", "pythonw.exe")
-                            exe_path = f'"{py_exe}" "{os.path.abspath(sys.argv[0])}"'
+                            exe_path = f'"{py_exe}" "{os.path.abspath(sys.argv[0])}"{silent_flag}'
                             
                         winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exe_path)
                     else:
-                        # Remove from autostart
-                        try:
-                            winreg.DeleteValue(key, app_name)
-                        except FileNotFoundError:
-                            pass # It was already removed, no big deal
+                        try: winreg.DeleteValue(key, app_name)
+                        except FileNotFoundError: pass
                             
                     winreg.CloseKey(key)
                 except Exception as e:
                     messagebox.showerror("Error", f"Failed to modify registry for Autostart.\n\n{e}")
-                    # Revert the checkbox if it failed
-                    auto_var.set(not new_val)
 
+        # The Main Autostart Checkbox
         tk.Checkbutton(
             auto_frame, text="Launch automatically when Windows starts", 
-            variable=auto_var, command=toggle_autostart,
+            variable=auto_var, command=update_registry_autostart,
             bg="#2E2E2E", fg="#AAAAAA", selectcolor="#1E1E1E", 
             activebackground="#2E2E2E", activeforeground="white"
-        ).pack(side=tk.LEFT)
+        ).pack(anchor="w")
+
+        # The Indented Sub-Checkbox Frame
+        sub_auto_frame = tk.Frame(auto_frame, bg="#2E2E2E")
+        sub_auto_frame.pack(fill=tk.X, padx=(25, 0)) # The 25px pad indents it!
+
+        silent_cb = tk.Checkbutton(
+            sub_auto_frame, text="Start minimized to system tray (Silent Autostart)", 
+            variable=silent_var, command=update_registry_autostart,
+            bg="#2E2E2E", fg="#AAAAAA", selectcolor="#1E1E1E", 
+            activebackground="#2E2E2E", activeforeground="white"
+        )
+        silent_cb.pack(anchor="w", pady=(2, 0))
+
+        # Add the hover Tooltip info!
+        tooltip_text = (
+            "When enabled, the app will start completely hidden\n"
+            "in the System Tray when Windows boots up.\n\n"
+            "It will NOT show the main dashboard window\n"
+            "until you double-click the tray icon."
+        )
+        ToolTip(silent_cb, tooltip_text)
+
+        # Initial disable check on startup
+        if not auto_var.get() or not tray_var.get():
+            silent_cb.config(state=tk.DISABLED)
+        
         
         # --- Auto-Refresh Spinbox & Presets ---
         refresh_frame = tk.Frame(settings_frame, bg="#2E2E2E")
@@ -1224,19 +1323,25 @@ class NetworkInfoApp(tk.Tk):
             self.update_idletasks()
             self.get_ip_info() # Only do the heavy lifting if fetch_data is True
             
-        for row in self.tree.get_children(): 
-            self.tree.delete(row)
-            
         current_ssids = [] # Track SSIDs for notifications
         
-        for iface, info in self.ip_info.items():
-            tag = ("wifi_connected",) if info.get('is_wifi') else ()
-            self.tree.insert("", "end", iid=iface, tags=tag, values=(
-                iface, info.get('SSID', 'N/A'), info.get('IP Address', 'N/A'), info.get('Password', 'N/A'),
-                info.get('MAC Address', 'N/A'), info.get('Config Type', 'N/A'), info.get('Router IP', 'N/A'), '...', '...'
-            ))
+        # Check if the UI table has actually been built yet
+        has_tree = hasattr(self, 'tree') and self.tree.winfo_exists()
+        
+        if has_tree:
+            for row in self.tree.get_children(): 
+                self.tree.delete(row)
             
-            # Save the connected SSID if it's Wi-Fi
+        for iface, info in self.ip_info.items():
+            # Only insert into the UI if the UI exists
+            if has_tree:
+                tag = ("wifi_connected",) if info.get('is_wifi') else ()
+                self.tree.insert("", "end", iid=iface, tags=tag, values=(
+                    iface, info.get('SSID', 'N/A'), info.get('IP Address', 'N/A'), info.get('Password', 'N/A'),
+                    info.get('MAC Address', 'N/A'), info.get('Config Type', 'N/A'), info.get('Router IP', 'N/A'), '...', '...'
+                ))
+            
+            # Save the connected SSID if it's Wi-Fi (we need this for notifications even if hidden!)
             if info.get('is_wifi') and info.get('SSID') != 'N/A':
                 current_ssids.append(info.get('SSID'))
             
@@ -1371,6 +1476,10 @@ class NetworkInfoApp(tk.Tk):
         else: self._destroy_and_exit()
 
     def _show_from_tray(self):
+        # If the tree hasn't been built yet (because of silent boot), build the dashboard now
+        if not hasattr(self, 'tree'):
+            self.show_dashboard()
+            
         self.deiconify()
         self.lift()
         self.status_var.set('Restored')
